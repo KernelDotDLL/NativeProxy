@@ -281,3 +281,66 @@ fn encode_reply(rep: u8, bound: Option<SocketAddr>) -> Vec<u8> {
 fn send_reply(client: &mut TcpStream, rep: u8, bound: Option<SocketAddr>) -> io::Result<()> {
     client.write_all(&encode_reply(rep, bound))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn parses_ipv4_target() {
+        let mut r = Cursor::new(vec![127, 0, 0, 1, 0x1F, 0x90]);
+        assert_eq!(
+            parse_target(&mut r, ATYP_IPV4).unwrap(),
+            vec!["127.0.0.1:8080".parse().unwrap()]
+        );
+    }
+
+    #[test]
+    fn parses_ipv6_target() {
+        let mut bytes = vec![0u8; 16];
+        bytes.extend_from_slice(&[0x1F, 0x90]);
+        let mut r = Cursor::new(bytes);
+        assert_eq!(
+            parse_target(&mut r, ATYP_IPV6).unwrap(),
+            vec!["[::]:8080".parse().unwrap()]
+        );
+    }
+
+    #[test]
+    fn rejects_empty_domain() {
+        let mut r = Cursor::new(vec![0u8, 0, 80]);
+        let e = parse_target(&mut r, ATYP_DOMAIN).unwrap_err();
+        assert_eq!(e.kind(), ErrorKind::Unsupported);
+    }
+
+    #[test]
+    fn rejects_unknown_atyp() {
+        let mut r = Cursor::new(Vec::<u8>::new());
+        let e = parse_target(&mut r, 0x09).unwrap_err();
+        assert_eq!(e.kind(), ErrorKind::Unsupported);
+    }
+
+    #[test]
+    fn encodes_bound_ipv4_reply() {
+        let addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
+        assert_eq!(
+            encode_reply(REP_SUCCEEDED, Some(addr)),
+            vec![0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0x1F, 0x90]
+        );
+    }
+
+    #[test]
+    fn encodes_unspecified_reply() {
+        assert_eq!(
+            encode_reply(REP_GENERAL_FAILURE, None),
+            vec![0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0]
+        );
+    }
+
+    #[test]
+    fn maps_refused_to_0x05() {
+        let e = io::Error::from(ErrorKind::ConnectionRefused);
+        assert_eq!(rep_for_io_error(&e), REP_CONNECTION_REFUSED);
+    }
+}
