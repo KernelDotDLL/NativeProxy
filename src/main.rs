@@ -4,8 +4,7 @@ use std::fs::ReadDir;
 use std::io::{ErrorKind, Read, Write};
 use std::io::ErrorKind::NotFound;
 use std::net::{Shutdown, SocketAddr, SocketAddrV4, TcpListener, TcpStream, ToSocketAddrs};
-
-
+use std::time::Duration;
 //Warning: Since im drunk and i've read the RFC 1928 like a moron. this shit can be unstable. shits gonna change very fast
 
 const ADDR: &str = "127.0.0.1:25567";
@@ -22,15 +21,14 @@ const REP_CMD_NOT_SUPPORTED: u8 = 0x07;
 const REP_ADDR_NOT_SUPPORTED: u8 = 0x08;
 
 
-fn main() {
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
+
+fn main() {
 
     let listener = match TcpListener::bind(ADDR) {
         Ok(l) => l,
-        Err(e) if e.kind() == ErrorKind::AddrInUse => {
-            eprintln!("Cannot bind to {ADDR}: the port is already in use.");
-            return;
-        },
         Err(e) => {
             eprintln!("Failed to bind to {ADDR}: {e}");
             return;
@@ -39,17 +37,23 @@ fn main() {
 
     println!("SOCKS5 server listening on {ADDR}");
 
-    for incoming in listener.incoming() {
-        match incoming {
-            Ok(stream) => {
+    loop {
+        match listener.accept() {
+            Ok((stream, peer)) => {
                 thread::spawn(move || {
                     if let Err(e) = handle_client(stream) {
-                        eprintln!("client error: {e}");
+                        eprintln!("client {peer}: {e}");
                     }
                 });
             }
+            Err(e)
+            if matches!(
+                    e.kind(),
+                    ErrorKind::ConnectionAborted | ErrorKind::Interrupted
+                ) => {}
             Err(e) => {
-                println!("Accept error: {e}");
+                eprintln!("accept failed: {e}");
+                thread::sleep(Duration::from_millis(100));
             }
         }
     }
